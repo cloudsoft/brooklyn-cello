@@ -45,7 +45,7 @@ brooklyn.catalog:
         description: |
           The max number of peers that can be created on each worker node.
         type: integer
-        default: 4
+        default: 10
       - name: peer.logging.level
         label: "Peer Logging Level"
         description: |
@@ -99,8 +99,8 @@ brooklyn.catalog:
       brooklyn.config:
         provisioning.properties:
           osFamily: ubuntu
-          # TODO: Generalize for 16.04
-          imageId: us-east-1/ami-bcd95caa
+          # TODO: Make cloud-agnostic for 16.04
+          imageNameRegex: Ubuntu 16.04 New
           minRam: 4gb
           required.ports:
             - 22
@@ -155,8 +155,8 @@ brooklyn.catalog:
           brooklyn.config:
             provisioning.properties:
               osFamily: ubuntu
-              # TODO: Generalize for 16.04
-              imageId: us-east-1/ami-bcd95caa
+              # TODO: Make cloud-agnostic for 16.04
+              imageNameRegex: Ubuntu 16.04 New
               minRam: 4gb
               required.ports:
                 - 22
@@ -196,7 +196,7 @@ brooklyn.catalog:
         NAME: $brooklyn:config("name")
         DAEMON_URL: $brooklyn:attributeWhenReady("daemon.url")
         CAPACITY: $brooklyn:config("worker.capacity")
-        LOG_TYPE: "LOCAL"
+        LOG_TYPE: "local"
         LOG_LEVEL: $brooklyn:config("peer.logging.level")
         AUTOFILL: $brooklyn:config("worker.autofill")
         SCHEDULABLE: $brooklyn:config("worker.schedulable")
@@ -256,14 +256,23 @@ brooklyn.catalog:
           && sudo docker tag hyperledger/fabric-membersrvc:x86_64-0.6.1-preview hyperledger/fabric-membersrvc
 
       launch.command: |
+        if [ $AUTOFILL == 'true' ]
+        then
+          AF='on'
+        else
+          AF='off'
+        fi
+
+        if [ $SCHEDULABLE == 'true' ]
+        then
+          SCHED='on'
+        else
+          SCHED='off'
+        fi
+
         curl -X POST -u admin:pass \
-          -F 'name=$NAME' \
-          -F 'daemon_url=$DAEMON_URL' \
-          -F 'capacity=$CAPACITY' \
-          -F 'log_type=$LOG_TYPE' \
-          -F 'log_level=$LOG_LEVEL' \
-          -F 'autofill=$AUTOFILL' \
-          -F 'schedulable=$SCHEDULABLE' \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "name=$NAME&daemon_url=$DAEMON_URL&capacity=$CAPACITY&log_level=$LOG_LEVEL&log_type=$LOG_TYPE&autofill=$AF&schedulable=$SCHED&log_server=" \
           $MASTER_ENDPOINT
 
       checkRunning.command: |
