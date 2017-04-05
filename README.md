@@ -1,2 +1,2 @@
 # brooklyn-cello
-Apache Brooklyn blueprint for Cello deployment
+Apache Brooklyn blueprint for Hyperledger Cello deployment

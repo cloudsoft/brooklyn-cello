@@ -1,0 +1,278 @@
+brooklyn.catalog:
+  version: 0.1.0-SNAPSHOT
+
+  publish:
+    description: |
+      Entities for running the Hyperledger Cello project in Apache Brooklyn.
+    license_code: Apache-2.0
+    icon_url: https://github.com/hyperledger/cello/raw/master/docs/imgs/logo.png
+
+  items:
+  - id: hyperledger-cello-cluster-template
+    description: |
+      A Hyperledger Cello cluster of a master node and worker nodes.
+    name: "Hyperledger Cello Cluster"
+    iconUrl: https://github.com/hyperledger/cello/raw/master/docs/imgs/logo.png
+    itemType: template
+    item:
+      services:
+      - type: hyperledger-cello-cluster-application
+        name: "Hyperledger Cello Cluster"
+
+  - id: hyperledger-cello-cluster-application
+    description: |
+      A Hyperledger Cello cluster of a master node and worker nodes.
+    publish:
+      license_code: Apache-2.0
+      overview: README.md
+    name: "Hyperledger Cello Cluster"
+    iconUrl: https://github.com/hyperledger/cello/raw/master/docs/imgs/logo.png
+    itemType: entity
+    item:
+      type: org.apache.brooklyn.entity.stock.BasicApplication
+
+      brooklyn.parameters:
+      - name: num.worker.nodes
+        label: "Number of Worker Nodes"
+        description: |
+          The number of Cello worker nodes to create.
+        type: integer
+        default: 3
+        constraints:
+          - required
+      - name: worker.capacity
+        label: "Capacity Per Worker"
+        description: |
+          The max number of peers that can be created on each worker node.
+        type: integer
+        default: 4
+      - name: peer.logging.level
+        label: "Peer Logging Level"
+        description: |
+          The logging level to be run by the peer nodes.
+        type: string
+        default: "DEBUG"
+      - name: worker.schedulable
+        label: "Worker Schedulable"
+        description: |
+          Whether the worker is schedulable for a cluster request.
+        type: boolean
+        default: false
+      - name: worker.autofill
+        label: "Worker Autofill"
+        description: |
+          Whether the worker will be automatically filled.
+        type: boolean
+        default: false
+
+      brooklyn.enrichers:
+        - type: org.apache.brooklyn.enricher.stock.Transformer
+          brooklyn.config:
+            uniqueTag: cello-main-uri-publisher
+            enricher.producer: $brooklyn:component("my-hyperledger-cello-master-node")
+            enricher.triggerSensors:
+              - $brooklyn:sensor("service.isUp")
+              - $brooklyn:sensor("host.address")
+            enricher.targetSensor:
+              $brooklyn:sensor("org.apache.brooklyn.core.entity.Attributes", "main.uri")
+            enricher.targetValue:
+              $brooklyn:formatString:
+                - "http://%s:8080"
+                - $brooklyn:component("my-hyperledger-cello-master-node").attributeWhenReady("host.address")
+
+      brooklyn.children:
+      - type: hyperledger-cello-master-node
+        name: "Hyperledger Cello Master Node"
+        id: my-hyperledger-cello-master-node
+
+      - type: hyperledger-cello-worker-cluster
+        name: "Hyperledger Cello Worker Cluster"
+        id: my-hyperledger-cello-worker-cluster
+
+  - id: hyperledger-cello-master-node
+    description: "A Hyperledger Cello master node"
+    itemType: entity
+    item:
+      type: org.apache.brooklyn.entity.software.base.VanillaSoftwareProcess
+      name: "Cello Master Node"
+
+      brooklyn.config:
+        provisioning.properties:
+          osFamily: ubuntu
+          # TODO: Generalize for 16.04
+          imageId: us-east-1/ami-bcd95caa
+          minRam: 4gb
+          required.ports:
+            - 22
+            - 80
+            - 8080
+            - 27017
+            - 27018
+
+      shell.env:
+        INSTALL_DIR: brooklyn:attributeWhenReady("install.dir")
+
+      install.command: |
+        sudo apt-get update -y
+        sudo apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys 58118E89F3A912897C070ADBF76221572C52609D
+        sudo apt-add-repository 'deb https://apt.dockerproject.org/repo ubuntu-xenial main'
+        sudo apt-get update -y
+        sudo apt-cache policy docker-engine
+        sudo apt-get install -y docker-engine git make
+        sudo systemctl status docker
+
+        sudo docker pull python:3.5 \
+          && sudo docker pull mongo:3.2 \
+          && sudo docker pull yeasy/nginx:latest \
+          && sudo docker pull mongo-express:0.30
+
+        git clone https://github.com/hyperledger/cello.git
+        cd cello
+        sudo make setup
+
+      launch.command: |
+        cd ${INSTALL_DIR}/cello
+        sudo make restart
+
+      checkRunning.command: |
+        # TODO: Improve check logic
+        sudo service docker status
+
+  - id: hyperledger-cello-worker-cluster
+    description: "A cluster of Hyperledger Cello worker nodes"
+    name: "Hyperledger Cello Worker Cluster"
+    item:
+      type: org.apache.brooklyn.entity.group.DynamicCluster
+
+      brooklyn.config:
+        initialSize: $brooklyn:config("num.worker.nodes")
+
+      memberSpec:
+        $brooklyn:entitySpec:
+          type: hyperledger-cello-worker-node
+          name: "Hyperledger Cello Worker Node"
+
+          brooklyn.config:
+            provisioning.properties:
+              osFamily: ubuntu
+              # TODO: Generalize for 16.04
+              imageId: us-east-1/ami-bcd95caa
+              minRam: 4gb
+              required.ports:
+                - 22
+                - 2375
+                - 7050
+                - 7051
+                - 7052
+                - 7053
+                - 7054
+                - 7055
+                - 7056
+                - 7057
+                - 7058
+                - 7059
+
+            launch.latch: $brooklyn:component("my-hyperledger-cello-master-node").attributeWhenReady("service.isUp")
+
+  - id: hyperledger-cello-worker-node
+    description: "A Hyperledger Cello worker node"
+    itemType: entity
+    item:
+      type: org.apache.brooklyn.entity.software.base.VanillaSoftwareProcess
+      name: "Cello Worker Node"
+
+      brooklyn.config:
+        name:
+          $brooklyn:formatString:
+            - "docker_host_%d"
+            - $brooklyn:config("cluster.member.id")
+
+        master.endpoint:
+          $brooklyn:formatString:
+            - "http://%s:8080/api/host"
+            - $brooklyn:component("my-hyperledger-cello-master-node").attributeWhenReady("host.address")
+
+      shell.env:
+        NAME: $brooklyn:config("name")
+        DAEMON_URL: $brooklyn:attributeWhenReady("daemon.url")
+        CAPACITY: $brooklyn:config("worker.capacity")
+        LOG_TYPE: "LOCAL"
+        LOG_LEVEL: $brooklyn:config("peer.logging.level")
+        AUTOFILL: $brooklyn:config("worker.autofill")
+        SCHEDULABLE: $brooklyn:config("worker.schedulable")
+
+        MASTER_ENDPOINT: $brooklyn:config("master.endpoint")
+
+      install.command: |
+        sudo apt-get update -y
+        sudo apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys 58118E89F3A912897C070ADBF76221572C52609D
+        sudo apt-add-repository 'deb https://apt.dockerproject.org/repo ubuntu-xenial main'
+        sudo apt-get update -y
+        sudo apt-cache policy docker-engine
+        sudo apt-get install -y docker-engine
+        sudo systemctl stop docker
+
+        sudo mkdir -p /etc/systemd/system/docker.service.d/
+        sudo -E tee /etc/systemd/system/docker.service.d/docker.conf <<-EOF
+        [Unit]
+        Description=Docker Application Container Engine
+        Documentation=https://docs.docker.com
+        After=network.target docker.socket firewalld.service
+        Requires=docker.socket
+        [Service]
+        Type=notify
+        # the default is not to use systemd for cgroups because the delegate issues still
+        # exists and systemd currently does not support the cgroup feature set required
+        # for containers run by docker
+        EnvironmentFile=-/etc/default/docker
+        ExecStart=
+        ExecStart=/usr/bin/dockerd -H fd:// -H tcp://0.0.0.0:2375 -H unix:///var/run/docker.sock --api-cors-header='*' --default-ulimit=nofile=8192:16384 --default-ulimit=nproc=8192:16384
+        LimitNOFILE=1048576
+        # Having non-zero Limit*s causes performance problems due to accounting overhead
+        # in the kernel. We recommend using cgroups to do container-local accounting.
+        LimitNPROC=infinity
+        LimitCORE=infinity
+        # Uncomment TasksMax if your systemd version supports it.
+        # Only systemd 226 and above support this version.
+        TasksMax=infinity
+        TimeoutStartSec=0
+        # set delegate yes so that systemd does not reset the cgroups of docker containers
+        Delegate=yes
+        # kill only the docker process, not all processes in the cgroup
+        KillMode=process
+        [Install]
+        WantedBy=multi-user.target
+        EOF
+
+        sudo systemctl daemon-reload
+        sudo systemctl restart docker.service
+        sudo systemctl status docker
+
+        sudo docker pull hyperledger/fabric-peer:x86_64-0.6.1-preview \
+          && sudo docker pull hyperledger/fabric-membersrvc:x86_64-0.6.1-preview \
+          && sudo docker pull yeasy/blockchain-explorer:latest \
+          && sudo docker tag hyperledger/fabric-peer:x86_64-0.6.1-preview hyperledger/fabric-peer \
+          && sudo docker tag hyperledger/fabric-peer:x86_64-0.6.1-preview hyperledger/fabric-baseimage \
+          && sudo docker tag hyperledger/fabric-membersrvc:x86_64-0.6.1-preview hyperledger/fabric-membersrvc
+
+      launch.command: |
+        curl -X POST -u admin:pass \
+          -F 'name=$NAME' \
+          -F 'daemon_url=$DAEMON_URL' \
+          -F 'capacity=$CAPACITY' \
+          -F 'log_type=$LOG_TYPE' \
+          -F 'log_level=$LOG_LEVEL' \
+          -F 'autofill=$AUTOFILL' \
+          -F 'schedulable=$SCHEDULABLE' \
+          $MASTER_ENDPOINT
+
+      checkRunning.command: |
+        # TODO: Improve check logic
+        sudo systemctl status docker
+
+      brooklyn.enrichers:
+      - type: org.apache.brooklyn.enricher.stock.Transformer
+        brooklyn.config:
+          enricher.sourceSensor: $brooklyn:sensor("host.address")
+          enricher.targetSensor: $brooklyn:sensor("daemon.url")
+          enricher.targetValue: $brooklyn:formatString("%s:%s", $brooklyn:attributeWhenReady("host.address"), "2375")
