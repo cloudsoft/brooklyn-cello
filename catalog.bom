@@ -99,8 +99,7 @@ brooklyn.catalog:
       brooklyn.config:
         provisioning.properties:
           osFamily: ubuntu
-          # TODO: Make cloud-agnostic for 16.04
-          imageNameRegex: Ubuntu 16.04 New
+          imageNameRegex: ".*16.04.*"
           minRam: 4gb
           required.ports:
             - 22
@@ -155,8 +154,7 @@ brooklyn.catalog:
           brooklyn.config:
             provisioning.properties:
               osFamily: ubuntu
-              # TODO: Make cloud-agnostic for 16.04
-              imageNameRegex: Ubuntu 16.04 New
+              imageNameRegex: ".*16.04.*"
               minRam: 4gb
               required.ports:
                 - 22
